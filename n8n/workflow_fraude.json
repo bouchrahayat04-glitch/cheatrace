@@ -1,0 +1,326 @@
+{
+  "name": "PFA Fraude — Investigation Modulaire",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "upload-copies",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-webhook",
+      "name": "Webhook — Réception des scans",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\nconst items = $input.all();\n\nconst firstItem = items[0].json;\nconst body = firstItem.body || firstItem;\nconst type_investigation = body.type_investigation || 'complete';\nconst email = body.email || 'professeur@ensaj.ma';\nconst exam_question = body.exam_question || '';\nconst investigation_id = body.investigation_id || Date.now().toString();\nconst callback_url = body.callback_url || 'http://127.0.0.1:5001/api/investigation/callback';\n\nconst UPLOAD_DIR = path.join('C:\\\\Forensic_Storage\\\\investigations', investigation_id);\nif (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });\n\nconst fichiersSauvegardes = [];\nfor (const item of items) {\n  const files = item.binary || {};\n  for (const [key, file] of Object.entries(files)) {\n    const nomFichier = file.fileName || `scan_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`;\n    const cheminSortie = path.join(UPLOAD_DIR, nomFichier);\n    const buffer = Buffer.from(file.data, 'base64');\n    fs.writeFileSync(cheminSortie, buffer);\n    fichiersSauvegardes.push({ nom: nomFichier, chemin: cheminSortie });\n  }\n}\nreturn [{ json: { fichiers: fichiersSauvegardes, nb_fichiers: fichiersSauvegardes.length, type_investigation: type_investigation, exam_question: exam_question, email: email, investigation_id: investigation_id, callback_url: callback_url } }];"
+      },
+      "id": "node-save-files",
+      "name": "SauvegardeImages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2 && env\\Scripts\\python.exe logic_crewai\\ocr_batch.py --dossier \"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}\" --sortie \"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}/resultats_ocr.json\" --question \"{{$node.SauvegardeImages.json.exam_question}}\" 2>&1"
+      },
+      "id": "node-ocr",
+      "name": "OCR — Extraction texte",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        620,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const exitCode = $input.first().json.exitCode;\nconst itemsSaved = $('SauvegardeImages').first().json || {};\nconst type_investigation = itemsSaved.type_investigation || 'complete';\nif (exitCode !== 0) return [{ json: { statut: 'erreur_ocr' } }];\nreturn [{ json: { statut: 'ocr_ok', type_investigation: type_investigation } }];"
+      },
+      "id": "node-check-ocr",
+      "name": "Vérification OCR",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "dataType": "string",
+        "value1": "={{ $json.type_investigation }}",
+        "rules": {
+          "rules": [
+            {
+              "value2": "singuliere",
+              "output": 0
+            },
+            {
+              "value2": "collaborative",
+              "output": 1
+            },
+            {
+              "value2": "complete",
+              "output": 2
+            }
+          ]
+        },
+        "fallbackOutput": 2
+      },
+      "id": "node-switch",
+      "name": "Switch Type Investigation",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2\\logic_crewai && ..\\env\\Scripts\\python.exe step1_nlp.py --payload \"{\\\"chemin_json\\\": \\\"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}/resultats_ocr.json\\\", \\\"type_investigation\\\": \\\"singuliere\\\", \\\"session_id\\\": \\\"{{$node.SauvegardeImages.json.investigation_id}}\\\"}\""
+      },
+      "id": "node-crewai-step1-singuliere",
+      "name": "Étape 1 (Singulière)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2\\logic_crewai && ..\\env\\Scripts\\python.exe step2_similarite.py --payload \"{\\\"chemin_json\\\": \\\"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}/resultats_ocr.json\\\", \\\"type_investigation\\\": \\\"collaborative\\\", \\\"session_id\\\": \\\"{{$node.SauvegardeImages.json.investigation_id}}\\\"}\""
+      },
+      "id": "node-crewai-step2-collab",
+      "name": "Étape 2 (Collaborative)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2\\logic_crewai && ..\\env\\Scripts\\python.exe step1_nlp.py --payload \"{\\\"chemin_json\\\": \\\"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}/resultats_ocr.json\\\", \\\"type_investigation\\\": \\\"complete\\\", \\\"session_id\\\": \\\"{{$node.SauvegardeImages.json.investigation_id}}\\\"}\""
+      },
+      "id": "node-crewai-step1-complete",
+      "name": "Étape 1 (Complète)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2\\logic_crewai && ..\\env\\Scripts\\python.exe step2_similarite.py --payload \"{\\\"chemin_json\\\": \\\"C:/Forensic_Storage/investigations/{{$node.SauvegardeImages.json.investigation_id}}/resultats_ocr.json\\\", \\\"type_investigation\\\": \\\"complete\\\", \\\"session_id\\\": \\\"{{$node.SauvegardeImages.json.investigation_id}}\\\"}\""
+      },
+      "id": "node-crewai-step2-complete",
+      "name": "Étape 2 (Complète)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "command": "=cd C:\\Users\\HP\\Downloads\\prjt_fixed2\\logic_crewai && ..\\env\\Scripts\\python.exe step3_juge.py --payload \"{\\\"email\\\": \\\"{{$node.SauvegardeImages.json.email}}\\\", \\\"session_id\\\": \\\"{{$node.SauvegardeImages.json.investigation_id}}\\\"}\""
+      },
+      "id": "node-crewai-step3-complete",
+      "name": "Étape 3: Juge",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [
+        1720,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || '{}';\nlet resultat = null;\n\nconst beginMarker = '===BEGIN_N8N_JSON===';\nconst endMarker = '===END_N8N_JSON===';\nconst startIndex = stdout.indexOf(beginMarker);\nconst endIndex = stdout.lastIndexOf(endMarker);\n\nif (startIndex !== -1 && endIndex !== -1 && endIndex > startIndex) {\n  const jsonStr = stdout.substring(startIndex + beginMarker.length, endIndex).trim();\n  try {\n    resultat = JSON.parse(jsonStr);\n  } catch (e) { }\n}\n\nif (!resultat) resultat = { statut: 'erreur_parsing', raw: stdout.substring(0, 1000) };\nreturn [{ json: resultat }];"
+      },
+      "id": "node-parse-result",
+      "name": "Parse résultat Final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "node-response-ok",
+      "name": "Callback Flask",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook — Réception des scans": {
+      "main": [
+        [
+          {
+            "node": "SauvegardeImages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SauvegardeImages": {
+      "main": [
+        [
+          {
+            "node": "OCR — Extraction texte",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OCR — Extraction texte": {
+      "main": [
+        [
+          {
+            "node": "Vérification OCR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vérification OCR": {
+      "main": [
+        [
+          {
+            "node": "Switch Type Investigation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Type Investigation": {
+      "main": [
+        [
+          {
+            "node": "Étape 1 (Singulière)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Étape 2 (Collaborative)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Étape 1 (Complète)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Étape 1 (Singulière)": {
+      "main": [
+        [
+          {
+            "node": "Parse résultat Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Étape 2 (Collaborative)": {
+      "main": [
+        [
+          {
+            "node": "Parse résultat Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Étape 1 (Complète)": {
+      "main": [
+        [
+          {
+            "node": "Étape 2 (Complète)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Étape 2 (Complète)": {
+      "main": [
+        [
+          {
+            "node": "Étape 3: Juge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Étape 3: Juge": {
+      "main": [
+        [
+          {
+            "node": "Parse résultat Final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse résultat Final": {
+      "main": [
+        [
+          {
+            "node": "Callback Flask",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "instanceId": "pfa-fraude-2026-modular"
+  }
+}
